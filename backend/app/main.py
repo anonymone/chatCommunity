@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import logging
 import os
 import uuid
@@ -31,6 +32,7 @@ class Message(BaseModel):
     author: str
     content: str
     timestamp: datetime
+    complete: bool = True
 
 
 class MessageRequest(BaseModel):
@@ -43,6 +45,14 @@ class MessageStore:
         self._items: Deque[Message] = deque(maxlen=limit)
 
     def add(self, message: Message) -> Message:
+        self._items.append(message)
+        return message
+
+    def upsert(self, message: Message) -> Message:
+        for index, existing in enumerate(self._items):
+            if existing.id == message.id:
+                self._items[index] = message
+                return message
         self._items.append(message)
         return message
 
@@ -104,22 +114,52 @@ async def _generate_ai_reply() -> Optional[Message]:
         role = "assistant" if message.author == OLLAMA_AUTHOR else "user"
         chat_messages.append({"role": role, "content": message.content})
 
-    payload = {"model": OLLAMA_MODEL, "messages": chat_messages, "stream": False}
-    async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
-        response = await client.post(f"{OLLAMA_BASE_URL}/api/chat", json=payload)
-    response.raise_for_status()
-    data = response.json()
-    content = data.get("message", {}).get("content")
-    if not content:
-        logger.warning("Ollama response missing content: %s", data)
-        return None
+    payload = {"model": OLLAMA_MODEL, "messages": chat_messages, "stream": True}
 
-    return Message(
+    placeholder = Message(
         id=str(uuid.uuid4()),
         author=OLLAMA_AUTHOR,
-        content=content.strip(),
+        content="正在生成...",
         timestamp=utc_now(),
+        complete=False,
     )
+    store.add(placeholder)
+
+    content_chunks: List[str] = []
+    async with httpx.AsyncClient(timeout=OLLAMA_TIMEOUT) as client:
+        async with client.stream("POST", f"{OLLAMA_BASE_URL}/api/chat", json=payload) as response:
+            response.raise_for_status()
+            async for line in response.aiter_lines():
+                if not line:
+                    continue
+                try:
+                    data = json.loads(line)
+                except json.JSONDecodeError:
+                    logger.warning("Failed to parse Ollama chunk: %s", line)
+                    continue
+                delta = data.get("message", {}).get("content") or ""
+                if delta:
+                    content_chunks.append(delta)
+                    updated_message = placeholder.model_copy(
+                        update={
+                            "content": "".join(content_chunks),
+                            "timestamp": utc_now(),
+                            "complete": data.get("done", False),
+                        }
+                    )
+                    store.upsert(updated_message)
+
+    final_text = "".join(content_chunks).strip() or placeholder.content
+
+    final_message = placeholder.model_copy(
+        update={
+            "content": final_text,
+            "timestamp": utc_now(),
+            "complete": True,
+        }
+    )
+    store.upsert(final_message)
+    return final_message
 
 
 @app.post("/messages", response_model=Message, status_code=201)
@@ -137,9 +177,6 @@ async def create_message(payload: MessageRequest) -> Message:
     except httpx.HTTPError as exc:
         logger.error("Failed to reach Ollama: %s", exc)
         raise HTTPException(status_code=502, detail="Failed to reach Ollama backend") from exc
-
-    if ai_message:
-        store.add(ai_message)
 
     return message
 

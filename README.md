@@ -1,12 +1,12 @@
 # ChatCommunity iOS App
 
-ChatCommunity 是一个使用 SwiftUI 实现的示例聊天客户端应用，展示了如何通过服务器收发消息。应用包含基本的消息列表、发送输入框以及一个可配置的服务端网络层，便于对接你现有的聊天后端。
+ChatCommunity 是一个使用 UIKit 实现的示例聊天客户端应用，展示了如何通过服务器收发消息。应用包含基本的消息列表、发送输入框以及一个可配置的服务端网络层，便于对接你现有的聊天后端。
 
 ## 功能概览
-- SwiftUI 构建的响应式聊天界面。
+- UIKit 构建的响应式聊天界面（`ChatViewController` + 自定义气泡 Cell）。
 - 可配置的服务器地址与 API 路径（参见 `ServerConfiguration.swift`）。
 - `URLSession` 实现的发送与轮询获取消息的网络层。
-- `ObservableObject` 驱动的 `ChatViewModel`，自动轮询服务器并更新 UI。
+- `ChatViewModel` 自动轮询服务器并通过闭包更新 UI，支持从服务器流式获取的 AI 回复。
 
 ## 目录结构
 ```
@@ -17,7 +17,7 @@ ChatCommunity/
 │   ├── Models                     # 数据模型
 │   ├── Networking                 # 网络层
 │   ├── ViewModels                 # 视图模型
-│   ├── Views                      # SwiftUI 视图
+│   ├── Views                      # UIKit 视图控制器
 │   └── Resources                  # 资源（Info.plist / Assets 等）
 ├── README.md                      # 本说明文档
 ```
@@ -27,13 +27,14 @@ ChatCommunity/
 - `GET /messages?since=<ISO8601>`：返回按时间倒序排列的新消息数组。
 - `POST /messages`：Body 为 `{ "author": "名字", "content": "内容" }`，返回已写入的消息 JSON。
 
-服务器返回的消息 JSON 形如：
+服务器返回的消息 JSON 形如（`complete` 表示流式回复是否结束）：
 ```json
 {
   "id": "uuid",
   "author": "Codex",
   "content": "Hello",
-  "timestamp": "2024-06-26T07:00:00Z"
+  "timestamp": "2024-06-26T07:00:00Z",
+  "complete": true
 }
 ```
 
@@ -65,7 +66,7 @@ uvicorn app.main:app --host 0.0.0.0 --port 8080 --reload
 
 ### API 说明
 - `GET /messages?since=<ISO8601>`：返回自 `since` 之后的新消息（若缺省则为全部，按时间升序）。
-- `POST /messages`：Body `{ "author": "名字", "content": "内容" }`，服务端会将消息写入并调用 Ollama 模型生成 AI 回复，随后由客户端轮询获取。
+- `POST /messages`：Body `{ "author": "名字", "content": "内容" }`，服务端会将消息写入并调用 Ollama 模型生成 AI 回复。回复是流式拼装的：先返回 `complete=false` 的占位消息，随后不断补全内容，最终 `complete=true`。
 
 ### 关键环境变量
 - `OLLAMA_BASE_URL`：Ollama 服务地址，默认 `http://localhost:11434`。

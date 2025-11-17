@@ -1,45 +1,50 @@
 import Foundation
 
 @MainActor
-final class ChatViewModel: ObservableObject {
-    @Published var messages: [Message] = []
-    @Published var inputText: String = ""
-    @Published var errorMessage: String?
-    @Published var isPresentingNameSheet = false
+final class ChatViewModel {
+    private(set) var messages: [Message] = [] {
+        didSet {
+            onMessagesUpdated?(messages)
+        }
+    }
 
-    var username: String = ""
+    var username: String {
+        didSet {
+            UserDefaults.standard.set(username, forKey: Self.usernameKey)
+        }
+    }
+
+    var onMessagesUpdated: (([Message]) -> Void)?
+    var onError: ((String) -> Void)?
 
     private let chatService: ChatService
     private var pollingTask: Task<Void, Never>?
     private var lastFetchedDate: Date?
 
-    var canSendMessage: Bool {
-        !inputText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && !username.isEmpty
-    }
+    private static let usernameKey = "chat.username"
 
     init(chatService: ChatService = ChatService()) {
         self.chatService = chatService
+        self.username = UserDefaults.standard.string(forKey: Self.usernameKey) ?? ""
         startPolling()
     }
 
-    func updateUsername(_ newName: String) {
+    func updateUsername(_ newName: String) -> Bool {
         let trimmed = newName.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { return false }
         username = trimmed
-        UserDefaults.standard.set(trimmed, forKey: "chat.username")
-        isPresentingNameSheet = false
+        return true
     }
 
-    func sendMessage() async {
-        let content = inputText.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !content.isEmpty, !username.isEmpty else { return }
-        inputText = ""
+    func sendMessage(content: String) async {
+        let trimmed = content.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty, !username.isEmpty else { return }
 
         do {
-            let message = try await chatService.sendMessage(content: content, author: username)
+            let message = try await chatService.sendMessage(content: trimmed, author: username)
             appendMessages([message])
         } catch {
-            self.errorMessage = error.localizedDescription
+            onError?(error.localizedDescription)
         }
     }
 
@@ -58,23 +63,20 @@ final class ChatViewModel: ObservableObject {
                     }
                 } catch {
                     await MainActor.run {
-                        self.errorMessage = error.localizedDescription
+                        self.onError?(error.localizedDescription)
                     }
                 }
-                try? await Task.sleep(nanoseconds: 3_000_000_000)
+                try? await Task.sleep(nanoseconds: 500_000_000)
             }
         }
     }
 
     private func appendMessages(_ newMessages: [Message]) {
         guard !newMessages.isEmpty else { return }
-        var combined = messages
+        var merged: [String: Message] = Dictionary(uniqueKeysWithValues: messages.map { ($0.id, $0) })
         for message in newMessages {
-            if !combined.contains(where: { $0.id == message.id }) {
-                combined.append(message)
-            }
+            merged[message.id] = message
         }
-        combined.sort(by: { $0.timestamp < $1.timestamp })
-        messages = combined
+        messages = merged.values.sorted(by: { $0.timestamp < $1.timestamp })
     }
 }

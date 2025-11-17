@@ -1,0 +1,15 @@
+version: "3.9"
+
+services:
+  chat-api:
+    build: ./backend
+    container_name: chatcommunity-api
+    ports:
+      - "8080:8080"
+    environment:
+      - MESSAGE_LIMIT=1000
+      - OLLAMA_BASE_URL=http://host.docker.internal:11434
+      - OLLAMA_MODEL=deepseek-r1:8b
+      - OLLAMA_HISTORY_LIMIT=20
+      - OLLAMA_SYSTEM_PROMPT=You are ChatCommunity, a concise helpful AI chatting with users inside an iOS demo app.
+    restart: unless-stopped

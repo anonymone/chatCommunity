@@ -1,0 +1,23 @@
+# Xcode
+DerivedData/
+*.xcuserstate
+*.xcworkspace/xcuserdata
+*.xcodeproj/project.xcworkspace/xcuserdata
+*.xcodeproj/xcuserdata
+
+# Swift Package Manager
+.build/
+
+# macOS
+.DS_Store
+
+# Python
+backend/.venv/
+__pycache__/
+*.pyc
+
+# Logs
+*.log
+
+# Env
+.env
